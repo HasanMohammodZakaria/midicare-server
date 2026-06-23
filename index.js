@@ -81,6 +81,7 @@ async function run() {
         // 2. MY APPOINTMENTS
 
         app.get('/api/patient/appointments', async (req, res) => {
+            const { userId } = req.query;
             if (!userId) return res.status(400).json({ error: "userId required" });
 
             try {
@@ -90,6 +91,194 @@ async function run() {
                 res.status(500).json({ error: error.message })
             }
         });
+
+        // PATCH /api/patient/appointments/:id/reschedule
+
+        app.get('/api/patient/appointments/:id/reschedule', async (req, res) => {
+            const { id } = req.params;
+            const { appointmentDate, appointmentsTime } = req.body;
+            if (!appointmentDate || !appointmentsTime) {
+                return res.status(400).json({ error: "date and time required" });
+            }
+            try {
+                const result = await appointmentsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            appointmentDate,
+                            appointmentsTime,
+                            appointmentsStatus: "pending",
+                        }
+                    }
+                );
+                res.json(result);
+            } catch (error) {
+                res.status(500).json({ error: error.message })
+            }
+        });
+
+        // PATCH /api/patient/appointments/:id/cancel 
+
+        app.patch('/api/patient/appointments/:id/cancel', async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await appointmentsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { appointmentStatus: "cancelled" } }
+                );
+                res.json(result);
+            } catch (error) {
+                res.status(500).json({ error: error.message })
+            }
+        });
+
+
+        // 3. PAYMENT HISTORY 
+
+        app.get('/api/patient/payments', async (req, res) => {
+            const { userId } = req.query;
+            if (!userId) return res.status(400).json({ error: "userId required" });
+            try {
+                const payments = await paymentsCollection.find({ patientId: userId }).sort({ payments: -1 }).toArray();
+                res.json(payments);
+            } catch (error) {
+                res.status(500).json({ error: error.message })
+            }
+        });
+
+        // ── PATCH /api/patient/payments/:id/request-refund ─────
+
+        app.patch("/api/patient/payments/:id/request-refund", async (req, res) => {
+            const { id } = req.params;
+            const { userId } = req.body;
+
+            if (!userId) {
+                return res.status(400).json({ error: "userId is required" });
+            }
+
+            try {
+                const { ObjectId } = require("mongodb");
+
+                const result = await paymentsCollection.updateOne(
+                    { _id: new ObjectId(id), patientId: userId },
+                    { $set: { paymentStatus: "refund_requested", refundRequestedAt: new Date() } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: "Payment not found" });
+                }
+
+                res.json({ success: true, message: "Refund request submitted" });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+        // 4. MY REVIEWS
+        app.get('/api/patient/reviews', async (req, res) => {
+            const { userId } = req.query;
+            if (!userId) return res.status(400).json({ error: "userId required" });
+            try {
+                const reviews = await reviewsCollection.find({ patientId: userId }).sort({ createdAt: -1 }).toArray();
+                res.json(reviews)
+            } catch (error) {
+                res.status(500).json({ error: error.message })
+            }
+        });
+
+        // POST /api/patient/reviews 
+
+        app.post('/api/patient/reviews', async (req, res) => {
+            const { patientId, doctorId, rating, reviewText } = req.body;
+            if (!patientId || !doctorId || !rating) {
+                return res.status(400).json({ error: "required fields missing" });
+            }
+
+            try {
+                const result = await reviewsCollection.insertOne({
+                    patientId,
+                    doctorId,
+                    rating,
+                    reviewText,
+                    createdAt: new Date(),
+                });
+                res.json(result);
+            } catch (error) {
+                res.status(500).json({ error: error.message })
+            }
+        });
+
+        // PATCH /api/patient/reviews/:id  
+
+        app.patch("/api/patient/reviews/:id", async (req, res) => {
+            const { id } = req.params;
+            const { rating, reviewText } = req.body;
+            try {
+                const result = await reviewsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { rating, reviewText } }
+                );
+                res.json(result);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // GET /api/patient/appointments/completed
+
+        app.get("/api/patient/appointments/completed", async (req, res) => {
+            const { userId } = req.query;
+            if (!userId) return res.status(400).json({ error: "userId required" });
+
+            try {
+                const appointments = await appointmentsCollection
+                    .find({
+                        patientId: userId,
+                        appointmentStatus: "completed",
+                    })
+                    .sort({ appointmentDate: -1 })
+                    .toArray();
+
+                const enriched = await Promise.all(
+                    appointments.map(async (appt) => {
+                        try {
+                            const doctor = await doctorsCollection.findOne({
+                                _id: new ObjectId(appt.doctorId),
+                            });
+                            return {
+                                ...appt,
+                                doctorName: doctor?.doctorName || null,
+                                specialization: doctor?.specialization || null,
+                            };
+                        } catch {
+                            return appt;
+                        }
+                    })
+                );
+
+                res.json(enriched);
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+
+        // DELETE /api/patient/reviews/:id  
+
+        app.delete("/api/patient/reviews/:id", async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await reviewsCollection.deleteOne({
+                    _id: new ObjectId(id),
+                });
+                res.json(result);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
 
 
 
