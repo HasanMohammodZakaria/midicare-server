@@ -279,6 +279,35 @@ async function run() {
         });
 
 
+        // 5. PROFILE  
+
+        app.get("/api/patient/profile", async (req, res) => {
+            const { userId } = req.query;
+            if (!userId) return res.status(400).json({ error: "userId required" });
+            try {
+                // Better Auth "user" collection এ id field string হিসেবে থাকে
+                const user = await usersCollection.findOne({ id: userId });
+                res.json(user);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/patient/profile 
+
+        app.patch("/api/patient/profile", async (req, res) => {
+            const { userId, ...updateData } = req.body;
+            if (!userId) return res.status(400).json({ error: "userId required" });
+            try {
+                const result = await usersCollection.updateOne(
+                    { id: userId },
+                    { $set: updateData }
+                );
+                res.json(result);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
 
 
 
