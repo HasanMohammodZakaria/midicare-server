@@ -473,6 +473,205 @@ async function run() {
         });
 
 
+        //  3. APPOINTMENT REQUESTS
+
+
+        // GET /api/doctor/appointments?doctorId=xxx
+
+        app.get("/api/doctor/appointments", async (req, res) => {
+            const { doctorId, status } = req.query;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const query = { doctorId };
+                if (status && status !== "all") query.appointmentStatus = status;
+
+                const appointments = await appointmentsCollection
+                    .find(query)
+                    .sort({ appointmentDate: -1 })
+                    .toArray();
+
+                // Patient info enrich করো
+                const enriched = await Promise.all(
+                    appointments.map(async (appt) => {
+                        try {
+                            const patient = await usersCollection.findOne({ id: appt.patientId });
+                            return {
+                                ...appt,
+                                patientName: patient?.name || "Unknown",
+                                patientEmail: patient?.email || null,
+                                patientImage: patient?.image || null,
+                            };
+                        } catch {
+                            return appt;
+                        }
+                    })
+                );
+
+                res.json(enriched);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/doctor/appointments/:id/accept
+
+        app.patch("/api/doctor/appointments/:id/accept", async (req, res) => {
+            const { id } = req.params;
+            const { doctorId } = req.body;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const result = await appointmentsCollection.updateOne(
+                    { _id: new ObjectId(id), doctorId },
+                    { $set: { appointmentStatus: "accepted" } }
+                );
+                if (result.matchedCount === 0) return res.status(404).json({ error: "Appointment not found" });
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/doctor/appointments/:id/reject
+
+        app.patch("/api/doctor/appointments/:id/reject", async (req, res) => {
+            const { id } = req.params;
+            const { doctorId } = req.body;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const result = await appointmentsCollection.updateOne(
+                    { _id: new ObjectId(id), doctorId },
+                    { $set: { appointmentStatus: "rejected" } }
+                );
+                if (result.matchedCount === 0) return res.status(404).json({ error: "Appointment not found" });
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/doctor/appointments/:id/complete
+        app.patch("/api/doctor/appointments/:id/complete", async (req, res) => {
+            const { id } = req.params;
+            const { doctorId } = req.body;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const result = await appointmentsCollection.updateOne(
+                    { _id: new ObjectId(id), doctorId },
+                    { $set: { appointmentStatus: "completed", completedAt: new Date() } }
+                );
+                if (result.matchedCount === 0) return res.status(404).json({ error: "Appointment not found" });
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
+
+        //  4. PRESCRIPTION MANAGEMENT
+
+
+        // GET /api/doctor/prescriptions?doctorId=xxx
+
+        app.get("/api/doctor/prescriptions", async (req, res) => {
+            const { doctorId } = req.query;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const prescriptions = await prescriptionsCollection
+                    .find({ doctorId })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                // Patient info enrich
+                const enriched = await Promise.all(
+                    prescriptions.map(async (p) => {
+                        try {
+                            const patient = await usersCollection.findOne({ id: p.patientId });
+                            return {
+                                ...p,
+                                patientName: patient?.name || "Unknown",
+                                patientEmail: patient?.email || null,
+                            };
+                        } catch {
+                            return p;
+                        }
+                    })
+                );
+
+                res.json(enriched);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // GET /api/doctor/prescriptions/:appointmentId
+
+        app.get("/api/doctor/prescriptions/:appointmentId", async (req, res) => {
+            const { appointmentId } = req.params;
+            try {
+                const prescription = await prescriptionsCollection.findOne({ appointmentId });
+                res.json(prescription || null);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // POST /api/doctor/prescriptions
+
+        app.post("/api/doctor/prescriptions", async (req, res) => {
+            const { doctorId, patientId, appointmentId, diagnosis, medications, notes } = req.body;
+            if (!doctorId || !patientId || !appointmentId) {
+                return res.status(400).json({ error: "doctorId, patientId, appointmentId required" });
+            }
+
+            try {
+                // Already exists check
+                const existing = await prescriptionsCollection.findOne({ appointmentId });
+                if (existing) {
+                    return res.status(400).json({ error: "Prescription already exists for this appointment" });
+                }
+
+                const result = await prescriptionsCollection.insertOne({
+                    doctorId,
+                    patientId,
+                    appointmentId,
+                    diagnosis,
+                    medications, // array: [{ name, dosage, duration }]
+                    notes,
+                    createdAt: new Date(),
+                });
+                res.json(result);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/doctor/prescriptions/:id
+
+        app.patch("/api/doctor/prescriptions/:id", async (req, res) => {
+            const { id } = req.params;
+            const { diagnosis, medications, notes } = req.body;
+
+            try {
+                const result = await prescriptionsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { diagnosis, medications, notes, updatedAt: new Date() } }
+                );
+                res.json(result);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
+
 
 
 
