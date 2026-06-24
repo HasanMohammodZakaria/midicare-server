@@ -45,11 +45,13 @@ async function run() {
         const reviewsCollection = db.collection("reviews");
         const paymentsCollection = db.collection("payments");
         const doctorsCollection = db.collection("doctors");
+        const prescriptionsCollection = db.collection("prescriptions");
 
-
+        // ════════════════════════════════════════════════════════════════
         //  PATIENT DASHBOARD APIs
 
-        // │  1. OVERVIEW
+
+        // 1. OVERVIEW
 
         app.get('/api/patient/overview', async (req, res) => {
             const { userId } = req.query;
@@ -309,12 +311,7 @@ async function run() {
             }
         });
 
-
-
-
         // ── Favorite Doctors
-
-
 
         app.get("/api/patient/favorite-doctors", async (req, res) => {
             const { userId } = req.query;
@@ -346,6 +343,89 @@ async function run() {
                     .toArray();
 
                 res.json(doctors);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+        // ════════════════════════════════════════════════════════════════
+        //  DOCTOR DASHBOARD APIs
+
+        // GET /api/doctor/overview?doctorId=xxx
+
+        app.get("/api/doctor/overview", async (req, res) => {
+            const { doctorId } = req.query;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const today = new Date().toISOString().split("T")[0]; // "2026-06-23"
+
+                const allAppointments = await appointmentsCollection
+                    .find({ doctorId })
+                    .toArray();
+
+                // Unique patients
+                const uniquePatients = new Set(allAppointments.map((a) => a.patientId));
+
+                // Today's appointments
+                const todaysAppointments = allAppointments.filter(
+                    (a) => a.appointmentDate?.startsWith(today)
+                );
+
+                // Reviews received
+                const reviews = await reviewsCollection
+                    .find({ doctorId })
+                    .toArray();
+
+                const avgRating = reviews.length
+                    ? (reviews.reduce((s, r) => s + (r.rating || 0), 0) / reviews.length).toFixed(1)
+                    : 0;
+
+                res.json({
+                    totalPatients: uniquePatients.size,
+                    todaysAppointments: todaysAppointments.length,
+                    totalReviews: reviews.length,
+                    avgRating: parseFloat(avgRating),
+                    totalAppointments: allAppointments.length,
+                    pendingAppointments: allAppointments.filter((a) => a.appointmentStatus === "pending").length,
+                });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // GET /api/doctor/appointments
+        app.get("/api/doctor/appointments", async (req, res) => {
+            const { doctorId, status } = req.query;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const query = { doctorId };
+                if (status && status !== "all") query.appointmentStatus = status;
+
+                const appointments = await appointmentsCollection
+                    .find(query)
+                    .sort({ appointmentDate: -1 })
+                    .toArray();
+
+                const enriched = await Promise.all(
+                    appointments.map(async (appt) => {
+                        try {
+                            const patient = await usersCollection.findOne({ id: appt.patientId });
+                            return {
+                                ...appt,
+                                patientName: patient?.name || "Unknown",
+                                patientEmail: patient?.email || null,
+                                patientImage: patient?.image || null,
+                            };
+                        } catch {
+                            return appt;
+                        }
+                    })
+                );
+
+                res.json(enriched);
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
