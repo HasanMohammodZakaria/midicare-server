@@ -671,6 +671,44 @@ async function run() {
 
 
 
+        //  5. DOCTOR PROFILE MANAGEMENT
+
+
+        // GET /api/doctor/profile?doctorId=xxx
+
+        app.get("/api/doctor/profile", async (req, res) => {
+            const { doctorId } = req.query;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const doctor = await doctorsCollection.findOne({ userId: doctorId });
+                if (!doctor) return res.status(404).json({ error: "Doctor profile not found" });
+                res.json(doctor);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/doctor/profile
+
+        app.patch("/api/doctor/profile", async (req, res) => {
+            const { doctorId, ...updateData } = req.body;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const result = await doctorsCollection.updateOne(
+                    { userId: doctorId },
+                    { $set: updateData }
+                );
+                res.json(result);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
+
 
 
 
