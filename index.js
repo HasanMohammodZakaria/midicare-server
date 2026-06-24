@@ -708,6 +708,160 @@ async function run() {
 
 
 
+        // ════════════════════════════════════════════════════════════════
+        // ADMIN DASHBOARD APIs
+
+
+
+        // 1. ADMIN OVERVIEW (Dashboard Home)                         
+
+
+        // GET /api/admin/overview
+        app.get("/api/admin/overview", async (req, res) => {
+            try {
+                const [users, doctors, appointments, payments] = await Promise.all([
+                    usersCollection.find({}).toArray(),
+                    doctorsCollection.find({}).toArray(),
+                    appointmentsCollection.find({}).toArray(),
+                    paymentsCollection.find({}).toArray(),
+                ]);
+
+                const totalRevenue = payments.reduce((s, p) => s + (p.amount || 0), 0);
+
+                res.json({
+                    totalUsers: users.length,
+                    totalPatients: users.filter(u => u.role === "patient").length,
+                    totalDoctors: doctors.length,
+                    verifiedDoctors: doctors.filter(d => d.verificationStatus === "verified").length,
+                    pendingDoctors: doctors.filter(d => d.verificationStatus === "pending").length,
+                    totalAppointments: appointments.length,
+                    pendingAppointments: appointments.filter(a => a.appointmentStatus === "pending").length,
+                    totalRevenue,
+                    totalPayments: payments.length,
+                    suspendedUsers: users.filter(u => u.status === "suspended").length,
+                });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
+        //   5. ANALYTICS                                               
+
+        // GET /api/admin/analytics
+        app.get("/api/admin/analytics", async (req, res) => {
+            try {
+                const [users, doctors, appointments, payments, reviews] = await Promise.all([
+                    usersCollection.find({}).toArray(),
+                    doctorsCollection.find({}).toArray(),
+                    appointmentsCollection.find({}).toArray(),
+                    paymentsCollection.find({}).toArray(),
+                    reviewsCollection.find({}).toArray(),
+                ]);
+
+                // ── Platform Stats ────────────────────────────
+                const totalPatients = users.filter(u => u.role === "patient").length;
+                const totalDoctors = doctors.length;
+                const totalAppointments = appointments.length;
+                const totalRevenue = payments.reduce((s, p) => s + (p.amount || 0), 0);
+
+                // ── Appointment Status Breakdown ──────────────
+                const appointmentStats = {
+                    pending: appointments.filter(a => a.appointmentStatus === "pending").length,
+                    accepted: appointments.filter(a => a.appointmentStatus === "accepted").length,
+                    completed: appointments.filter(a => a.appointmentStatus === "completed").length,
+                    cancelled: appointments.filter(a => a.appointmentStatus === "cancelled").length,
+                    rejected: appointments.filter(a => a.appointmentStatus === "rejected").length,
+                };
+
+                // ── Doctor Performance (Rating based) ─────────
+                const doctorPerformance = await Promise.all(
+                    doctors.slice(0, 10).map(async (doc) => {
+                        const docReviews = reviews.filter(r => r.doctorId === doc.userId);
+                        const avgRating = docReviews.length
+                            ? (docReviews.reduce((s, r) => s + (r.rating || 0), 0) / docReviews.length).toFixed(1)
+                            : 0;
+                        const docAppointments = appointments.filter(a => a.doctorId === doc.userId);
+                        return {
+                            name: doc.doctorName || "Unknown",
+                            specialization: doc.specialization || "General",
+                            avgRating: parseFloat(avgRating),
+                            totalReviews: docReviews.length,
+                            totalAppointments: docAppointments.length,
+                            verificationStatus: doc.verificationStatus || "pending",
+                        };
+                    })
+                );
+
+                // ── Monthly Revenue (last 6 months) ───────────
+                const monthlyRevenue = [];
+                for (let i = 5; i >= 0; i--) {
+                    const date = new Date();
+                    date.setMonth(date.getMonth() - i);
+                    const month = date.toLocaleString("en-US", { month: "short" });
+                    const year = date.getFullYear();
+                    const monthKey = `${year}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+                    const monthPayments = payments.filter(p =>
+                        p.paymentDate?.startsWith(monthKey)
+                    );
+                    monthlyRevenue.push({
+                        month,
+                        revenue: monthPayments.reduce((s, p) => s + (p.amount || 0), 0),
+                        count: monthPayments.length,
+                    });
+                }
+
+                // ── Monthly Appointments (last 6 months) ──────
+                const monthlyAppointments = [];
+                for (let i = 5; i >= 0; i--) {
+                    const date = new Date();
+                    date.setMonth(date.getMonth() - i);
+                    const month = date.toLocaleString("en-US", { month: "short" });
+                    const year = date.getFullYear();
+                    const monthKey = `${year}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+                    const monthApts = appointments.filter(a =>
+                        a.appointmentDate?.startsWith(monthKey)
+                    );
+                    monthlyAppointments.push({
+                        month,
+                        total: monthApts.length,
+                        completed: monthApts.filter(a => a.appointmentStatus === "completed").length,
+                        cancelled: monthApts.filter(a => a.appointmentStatus === "cancelled").length,
+                    });
+                }
+
+                res.json({
+                    // Platform stats
+                    totalPatients,
+                    totalDoctors,
+                    totalAppointments,
+                    totalRevenue,
+                    totalReviews: reviews.length,
+
+                    // Breakdowns
+                    appointmentStats,
+                    doctorPerformance: doctorPerformance.sort((a, b) => b.avgRating - a.avgRating),
+                    monthlyRevenue,
+                    monthlyAppointments,
+
+                    // Doctor verification stats
+                    verificationStats: {
+                        verified: doctors.filter(d => d.verificationStatus === "verified").length,
+                        pending: doctors.filter(d => d.verificationStatus === "pending").length,
+                        rejected: doctors.filter(d => d.verificationStatus === "rejected").length,
+                    },
+                });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
+
 
 
 
