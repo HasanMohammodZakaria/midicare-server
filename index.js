@@ -432,6 +432,48 @@ async function run() {
         });
 
 
+        // GET /api/doctor/schedule?doctorId=xxx
+
+        app.get("/api/doctor/schedule", async (req, res) => {
+            const { doctorId } = req.query;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const doctor = await doctorsCollection.findOne({ userId: doctorId });
+                if (!doctor) return res.json({
+                    availableDays: [],
+                    availableSlots: [],
+                });
+
+                res.json({
+                    availableDays: doctor.availableDays || [],
+                    availableSlots: doctor.availableSlots || [],
+                });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/doctor/schedule
+
+        app.patch("/api/doctor/schedule", async (req, res) => {
+            const { doctorId, availableDays, availableSlots } = req.body;
+            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+            try {
+                const result = await doctorsCollection.updateOne(
+                    { userId: doctorId },
+                    { $set: { availableDays, availableSlots, userId: doctorId } },
+                    { upsert: true }
+                );
+                res.json(result);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
 
 
 
