@@ -747,6 +747,76 @@ async function run() {
 
 
 
+        // 1. MANAGE USERS                                            
+
+        // GET /api/admin/users
+
+        app.get("/api/admin/users", async (req, res) => {
+            try {
+                const users = await usersCollection
+                    .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.json(users);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // DELETE /api/admin/users/:id
+
+        app.delete("/api/admin/users/:id", async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await usersCollection.deleteOne({ id });
+                if (result.deletedCount === 0) {
+                    return res.status(404).json({ error: "User not found" });
+                }
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/admin/users/:id/suspend
+
+        app.patch("/api/admin/users/:id/suspend", async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await usersCollection.updateOne(
+                    { id },
+                    { $set: { status: "suspended" } }
+                );
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: "User not found" });
+                }
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/admin/users/:id/activate
+
+        app.patch("/api/admin/users/:id/activate", async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await usersCollection.updateOne(
+                    { id },
+                    { $set: { status: "active" } }
+                );
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: "User not found" });
+                }
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
+
         //   5. ANALYTICS                                               
 
         // GET /api/admin/analytics
