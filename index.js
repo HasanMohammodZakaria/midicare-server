@@ -816,6 +816,96 @@ async function run() {
 
 
 
+        // │2. MANAGE DOCTORS                                          
+
+        // GET /api/admin/doctors
+
+        app.get("/api/admin/doctors", async (req, res) => {
+            try {
+                const doctors = await doctorsCollection
+                    .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                // User info enrich
+                const enriched = await Promise.all(
+                    doctors.map(async (doc) => {
+                        try {
+                            const user = await usersCollection.findOne({ id: doc.userId });
+                            return {
+                                ...doc,
+                                userEmail: user?.email || null,
+                                userStatus: user?.status || "active",
+                            };
+                        } catch {
+                            return doc;
+                        }
+                    })
+                );
+
+                res.json(enriched);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/admin/doctors/:id/verify
+
+        app.patch("/api/admin/doctors/:id/verify", async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await doctorsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { verificationStatus: "verified", verifiedAt: new Date() } }
+                );
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: "Doctor not found" });
+                }
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/admin/doctors/:id/reject
+
+        app.patch("/api/admin/doctors/:id/reject", async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await doctorsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { verificationStatus: "rejected" } }
+                );
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: "Doctor not found" });
+                }
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // PATCH /api/admin/doctors/:id/revoke
+
+        app.patch("/api/admin/doctors/:id/revoke", async (req, res) => {
+            const { id } = req.params;
+            try {
+                const result = await doctorsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { verificationStatus: "pending" } }
+                );
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: "Doctor not found" });
+                }
+                res.json({ success: true });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
+
 
         //   5. ANALYTICS                                               
 
