@@ -950,6 +950,41 @@ async function run() {
 
 
 
+        //  4. PAYMENT MANAGEMENT                                      
+
+        // GET /api/admin/payments
+        app.get("/api/admin/payments", async (req, res) => {
+            try {
+                const payments = await paymentsCollection
+                    .find({})
+                    .sort({ paymentDate: -1 })
+                    .toArray();
+
+                // Patient + Doctor info enrich
+                const enriched = await Promise.all(
+                    payments.map(async (pay) => {
+                        try {
+                            const [patient, doctor] = await Promise.all([
+                                usersCollection.findOne({ id: pay.patientId }),
+                                doctorsCollection.findOne({ userId: pay.doctorId }),
+                            ]);
+                            return {
+                                ...pay,
+                                patientName: patient?.name || "Unknown",
+                                doctorName: doctor?.doctorName || "Unknown",
+                            };
+                        } catch {
+                            return pay;
+                        }
+                    })
+                );
+
+                res.json(enriched);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
 
 
 
