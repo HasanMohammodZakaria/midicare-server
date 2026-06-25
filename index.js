@@ -816,7 +816,7 @@ async function run() {
 
 
 
-        // │2. MANAGE DOCTORS                                          
+        // 2. MANAGE DOCTORS                                          
 
         // GET /api/admin/doctors
 
@@ -902,6 +902,52 @@ async function run() {
                 res.status(500).json({ error: err.message });
             }
         });
+
+
+
+        //  3. MANAGE APPOINTMENTS                                     
+
+
+        // GET /api/admin/appointments
+
+        app.get("/api/admin/appointments", async (req, res) => {
+            const { status } = req.query;
+            try {
+                const query = {};
+                if (status && status !== "all") query.appointmentStatus = status;
+
+                const appointments = await appointmentsCollection
+                    .find(query)
+                    .sort({ appointmentDate: -1 })
+                    .toArray();
+
+                // Patient + Doctor info enrich
+                const enriched = await Promise.all(
+                    appointments.map(async (appt) => {
+                        try {
+                            const [patient, doctor] = await Promise.all([
+                                usersCollection.findOne({ id: appt.patientId }),
+                                doctorsCollection.findOne({ userId: appt.doctorId }),
+                            ]);
+                            return {
+                                ...appt,
+                                patientName: patient?.name || "Unknown",
+                                patientEmail: patient?.email || null,
+                                doctorName: doctor?.doctorName || "Unknown",
+                                specialization: doctor?.specialization || null,
+                            };
+                        } catch {
+                            return appt;
+                        }
+                    })
+                );
+
+                res.json(enriched);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
 
 
 
