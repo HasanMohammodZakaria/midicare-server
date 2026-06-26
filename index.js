@@ -46,6 +46,7 @@ async function run() {
         const paymentsCollection = db.collection("payments");
         const doctorsCollection = db.collection("doctors");
         const prescriptionsCollection = db.collection("prescriptions");
+        const patientsCollection = db.collection("patients");
 
         // ════════════════════════════════════════════════════════════════
         //  PATIENT DASHBOARD APIs
@@ -283,29 +284,57 @@ async function run() {
 
         // 5. PROFILE  
 
+        // GET /api/patient/profile
         app.get("/api/patient/profile", async (req, res) => {
             const { userId } = req.query;
-            if (!userId) return res.status(400).json({ error: "userId required" });
+
             try {
-                // Better Auth "user" collection এ id field string হিসেবে থাকে
-                const user = await usersCollection.findOne({ id: userId });
-                res.json(user);
+                const user = await usersCollection.findOne({
+                    _id: new ObjectId(userId)
+                });
+                if (!user) return res.status(404).json({ error: "User not found" });
+
+                const profile = await patientsCollection.findOne({ userId });
+
+                res.json({
+                    id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    image: user.image ?? profile?.image ?? null,
+                    phone: profile?.phone ?? null,
+                    gender: profile?.gender ?? null,
+                    status: user.status ?? "active",
+                    emailVerified: user.emailVerified ?? false,
+                    createdAt: user.createdAt ?? null,
+                });
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
         });
 
-        // PATCH /api/patient/profile 
-
+        // PATCH /api/patient/profile
         app.patch("/api/patient/profile", async (req, res) => {
-            const { userId, ...updateData } = req.body;
-            if (!userId) return res.status(400).json({ error: "userId required" });
+            const { userId, name, phone, gender, image } = req.body;
+
             try {
-                const result = await usersCollection.updateOne(
-                    { id: userId },
-                    { $set: updateData }
+                await usersCollection.updateOne(
+                    { _id: new ObjectId(userId) },
+                    {
+                        $set: {
+                            name,
+                            image: image || null,
+                            updatedAt: new Date()
+                        }
+                    }
                 );
-                res.json(result);
+
+                await patientsCollection.updateOne(
+                    { userId },
+                    { $set: { userId, phone, gender, image, updatedAt: new Date() } },
+                    { upsert: true }
+                );
+
+                res.json({ success: true });
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
@@ -692,15 +721,30 @@ async function run() {
         // PATCH /api/doctor/profile
 
         app.patch("/api/doctor/profile", async (req, res) => {
-            const { doctorId, ...updateData } = req.body;
+            const { doctorId, profileImage, doctorName, ...updateData } = req.body;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
             try {
-                const result = await doctorsCollection.updateOne(
+                // doctors collection 
+                await doctorsCollection.updateOne(
                     { userId: doctorId },
-                    { $set: updateData }
+                    { $set: { profileImage, doctorName, ...updateData } },
+                    { upsert: true }
                 );
-                res.json(result);
+
+
+                await usersCollection.updateOne(
+                    { _id: new ObjectId(doctorId) },
+                    {
+                        $set: {
+                            image: profileImage || null,
+                            name: doctorName,
+                            updatedAt: new Date()
+                        }
+                    }
+                );
+
+                res.json({ success: true });
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
