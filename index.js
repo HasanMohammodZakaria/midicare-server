@@ -2,6 +2,7 @@ const express = require('express');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
 
 dotenv.config();
 
@@ -30,6 +31,59 @@ const client = new MongoClient(uri, {
     }
 });
 
+const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`))
+
+const verifyToken = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer')) {
+        return res.status(401).json({ msg: "Unauthorized" })
+    }
+    const token = authHeader.split(" ")[1]
+
+    if (!token) {
+        return res.status(401).json({ msg: "Unauthorized" })
+    }
+
+    try {
+        const { payload } = await jwtVerify(token, JWKS);
+        req.user = payload
+        console.log(payload);
+        next();
+
+    } catch (error) {
+        console.log(error);
+        return res.status(401).json({ msg: "Unauthorized" })
+    }
+}
+
+
+// ── patientVerify ────────────────────────────────────────────
+const patientVerify = (req, res, next) => {
+    if (req.user?.role !== "patient") {
+        return res.status(403).json({ msg: "Patient access only" });
+    }
+    next();
+};
+
+// ── doctorVerify ─────────────────────────────────────────────
+const doctorVerify = (req, res, next) => {
+    if (req.user?.role !== "doctor") {
+        return res.status(403).json({ msg: "Doctor access only" });
+    }
+    next();
+};
+
+// ── adminVerify ──────────────────────────────────────────────
+const adminVerify = (req, res, next) => {
+    if (req.user?.role !== "admin") {
+        return res.status(403).json({ msg: "Admin access only" });
+    }
+    next();
+};
+
+
+
 async function run() {
     try {
 
@@ -54,7 +108,7 @@ async function run() {
 
         // 1. OVERVIEW
 
-        app.get('/api/patient/overview', async (req, res) => {
+        app.get('/api/patient/overview', verifyToken, patientVerify, async (req, res) => {
             const { userId } = req.query;
             if (!userId) {
                 return res.status(400).json({ error: "userId required" });
@@ -83,7 +137,7 @@ async function run() {
 
         // 2. MY APPOINTMENTS
 
-        app.get('/api/patient/appointments', async (req, res) => {
+        app.get('/api/patient/appointments', verifyToken, patientVerify, async (req, res) => {
             const { userId } = req.query;
             if (!userId) return res.status(400).json({ error: "userId required" });
 
@@ -97,7 +151,7 @@ async function run() {
 
         // PATCH /api/patient/appointments/:id/reschedule
 
-        app.get('/api/patient/appointments/:id/reschedule', async (req, res) => {
+        app.patch('/api/patient/appointments/:id/reschedule', verifyToken, patientVerify, async (req, res) => {
             const { id } = req.params;
             const { appointmentDate, appointmentsTime } = req.body;
             if (!appointmentDate || !appointmentsTime) {
@@ -122,7 +176,7 @@ async function run() {
 
         // PATCH /api/patient/appointments/:id/cancel 
 
-        app.patch('/api/patient/appointments/:id/cancel', async (req, res) => {
+        app.patch('/api/patient/appointments/:id/cancel', verifyToken, patientVerify, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await appointmentsCollection.updateOne(
@@ -138,7 +192,7 @@ async function run() {
 
         // 3. PAYMENT HISTORY 
 
-        app.get('/api/patient/payments', async (req, res) => {
+        app.get('/api/patient/payments', verifyToken, patientVerify, async (req, res) => {
             const { userId } = req.query;
             if (!userId) return res.status(400).json({ error: "userId required" });
             try {
@@ -151,7 +205,7 @@ async function run() {
 
         // ── PATCH /api/patient/payments/:id/request-refund ─────
 
-        app.patch("/api/patient/payments/:id/request-refund", async (req, res) => {
+        app.patch("/api/patient/payments/:id/request-refund", verifyToken, patientVerify, async (req, res) => {
             const { id } = req.params;
             const { userId } = req.body;
 
@@ -179,7 +233,7 @@ async function run() {
 
 
         // 4. MY REVIEWS
-        app.get('/api/patient/reviews', async (req, res) => {
+        app.get('/api/patient/reviews', verifyToken, patientVerify, async (req, res) => {
             const { userId } = req.query;
             if (!userId) return res.status(400).json({ error: "userId required" });
             try {
@@ -192,7 +246,7 @@ async function run() {
 
         // POST /api/patient/reviews 
 
-        app.post('/api/patient/reviews', async (req, res) => {
+        app.post('/api/patient/reviews', verifyToken, patientVerify, async (req, res) => {
             const { patientId, doctorId, rating, reviewText } = req.body;
             if (!patientId || !doctorId || !rating) {
                 return res.status(400).json({ error: "required fields missing" });
@@ -214,7 +268,7 @@ async function run() {
 
         // PATCH /api/patient/reviews/:id  
 
-        app.patch("/api/patient/reviews/:id", async (req, res) => {
+        app.patch("/api/patient/reviews/:id", verifyToken, patientVerify, async (req, res) => {
             const { id } = req.params;
             const { rating, reviewText } = req.body;
             try {
@@ -230,7 +284,7 @@ async function run() {
 
         // GET /api/patient/appointments/completed
 
-        app.get("/api/patient/appointments/completed", async (req, res) => {
+        app.get("/api/patient/appointments/completed", verifyToken, patientVerify, async (req, res) => {
             const { userId } = req.query;
             if (!userId) return res.status(400).json({ error: "userId required" });
 
@@ -269,7 +323,7 @@ async function run() {
 
         // DELETE /api/patient/reviews/:id  
 
-        app.delete("/api/patient/reviews/:id", async (req, res) => {
+        app.delete("/api/patient/reviews/:id", verifyToken, patientVerify, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await reviewsCollection.deleteOne({
@@ -285,7 +339,7 @@ async function run() {
         // 5. PROFILE  
 
         // GET /api/patient/profile
-        app.get("/api/patient/profile", async (req, res) => {
+        app.get("/api/patient/profile", verifyToken, patientVerify, async (req, res) => {
             const { userId } = req.query;
 
             try {
@@ -313,7 +367,7 @@ async function run() {
         });
 
         // PATCH /api/patient/profile
-        app.patch("/api/patient/profile", async (req, res) => {
+        app.patch("/api/patient/profile", verifyToken, patientVerify, async (req, res) => {
             const { userId, name, phone, gender, image } = req.body;
 
             try {
@@ -342,7 +396,7 @@ async function run() {
 
         // ── Favorite Doctors
 
-        app.get("/api/patient/favorite-doctors", async (req, res) => {
+        app.get("/api/patient/favorite-doctors", verifyToken, patientVerify, async (req, res) => {
             const { userId } = req.query;
             try {
 
@@ -378,12 +432,11 @@ async function run() {
         });
 
 
-        // ════════════════════════════════════════════════════════════════
         //  DOCTOR DASHBOARD APIs
 
         // GET /api/doctor/overview?doctorId=xxx
 
-        app.get("/api/doctor/overview", async (req, res) => {
+        app.get("/api/doctor/overview", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId } = req.query;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
@@ -425,7 +478,7 @@ async function run() {
         });
 
         // GET /api/doctor/appointments
-        app.get("/api/doctor/appointments", async (req, res) => {
+        app.get("/api/doctor/appointments", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId, status } = req.query;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
@@ -463,7 +516,7 @@ async function run() {
 
         // GET /api/doctor/schedule?doctorId=xxx
 
-        app.get("/api/doctor/schedule", async (req, res) => {
+        app.get("/api/doctor/schedule", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId } = req.query;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
@@ -485,7 +538,7 @@ async function run() {
 
         // PATCH /api/doctor/schedule
 
-        app.patch("/api/doctor/schedule", async (req, res) => {
+        app.patch("/api/doctor/schedule", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId, availableDays, availableSlots } = req.body;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
@@ -507,7 +560,7 @@ async function run() {
 
         // GET /api/doctor/appointments?doctorId=xxx
 
-        app.get("/api/doctor/appointments", async (req, res) => {
+        app.get("/api/doctor/appointments", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId, status } = req.query;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
@@ -545,7 +598,7 @@ async function run() {
 
         // PATCH /api/doctor/appointments/:id/accept
 
-        app.patch("/api/doctor/appointments/:id/accept", async (req, res) => {
+        app.patch("/api/doctor/appointments/:id/accept", verifyToken, doctorVerify, async (req, res) => {
             const { id } = req.params;
             const { doctorId } = req.body;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
@@ -564,7 +617,7 @@ async function run() {
 
         // PATCH /api/doctor/appointments/:id/reject
 
-        app.patch("/api/doctor/appointments/:id/reject", async (req, res) => {
+        app.patch("/api/doctor/appointments/:id/reject", verifyToken, doctorVerify, async (req, res) => {
             const { id } = req.params;
             const { doctorId } = req.body;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
@@ -582,7 +635,7 @@ async function run() {
         });
 
         // PATCH /api/doctor/appointments/:id/complete
-        app.patch("/api/doctor/appointments/:id/complete", async (req, res) => {
+        app.patch("/api/doctor/appointments/:id/complete", verifyToken, doctorVerify, async (req, res) => {
             const { id } = req.params;
             const { doctorId } = req.body;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
@@ -607,7 +660,7 @@ async function run() {
 
         // GET /api/doctor/prescriptions?doctorId=xxx
 
-        app.get("/api/doctor/prescriptions", async (req, res) => {
+        app.get("/api/doctor/prescriptions", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId } = req.query;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
@@ -641,7 +694,7 @@ async function run() {
 
         // GET /api/doctor/prescriptions/:appointmentId
 
-        app.get("/api/doctor/prescriptions/:appointmentId", async (req, res) => {
+        app.get("/api/doctor/prescriptions/:appointmentId", verifyToken, doctorVerify, async (req, res) => {
             const { appointmentId } = req.params;
             try {
                 const prescription = await prescriptionsCollection.findOne({ appointmentId });
@@ -653,7 +706,7 @@ async function run() {
 
         // POST /api/doctor/prescriptions
 
-        app.post("/api/doctor/prescriptions", async (req, res) => {
+        app.post("/api/doctor/prescriptions", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId, patientId, appointmentId, diagnosis, medications, notes } = req.body;
             if (!doctorId || !patientId || !appointmentId) {
                 return res.status(400).json({ error: "doctorId, patientId, appointmentId required" });
@@ -683,7 +736,7 @@ async function run() {
 
         // PATCH /api/doctor/prescriptions/:id
 
-        app.patch("/api/doctor/prescriptions/:id", async (req, res) => {
+        app.patch("/api/doctor/prescriptions/:id", verifyToken, doctorVerify, async (req, res) => {
             const { id } = req.params;
             const { diagnosis, medications, notes } = req.body;
 
@@ -705,7 +758,7 @@ async function run() {
 
         // GET /api/doctor/profile?doctorId=xxx
 
-        app.get("/api/doctor/profile", async (req, res) => {
+        app.get("/api/doctor/profile", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId } = req.query;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
@@ -720,7 +773,7 @@ async function run() {
 
         // PATCH /api/doctor/profile
 
-        app.patch("/api/doctor/profile", async (req, res) => {
+        app.patch("/api/doctor/profile", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId, profileImage, doctorName, ...updateData } = req.body;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
@@ -761,7 +814,7 @@ async function run() {
 
 
         // GET /api/admin/overview
-        app.get("/api/admin/overview", async (req, res) => {
+        app.get("/api/admin/overview", verifyToken, adminVerify, async (req, res) => {
             try {
                 const [users, doctors, appointments, payments] = await Promise.all([
                     usersCollection.find({}).toArray(),
@@ -795,7 +848,7 @@ async function run() {
 
         // GET /api/admin/users
 
-        app.get("/api/admin/users", async (req, res) => {
+        app.get("/api/admin/users", verifyToken, adminVerify, async (req, res) => {
             try {
                 const users = await usersCollection
                     .find({})
@@ -809,7 +862,7 @@ async function run() {
 
         // DELETE /api/admin/users/:id
 
-        app.delete("/api/admin/users/:id", async (req, res) => {
+        app.delete("/api/admin/users/:id", verifyToken, adminVerify, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await usersCollection.deleteOne({ id });
@@ -824,7 +877,7 @@ async function run() {
 
         // PATCH /api/admin/users/:id/suspend
 
-        app.patch("/api/admin/users/:id/suspend", async (req, res) => {
+        app.patch("/api/admin/users/:id/suspend", verifyToken, adminVerify, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await usersCollection.updateOne(
@@ -842,7 +895,7 @@ async function run() {
 
         // PATCH /api/admin/users/:id/activate
 
-        app.patch("/api/admin/users/:id/activate", async (req, res) => {
+        app.patch("/api/admin/users/:id/activate", verifyToken, adminVerify, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await usersCollection.updateOne(
@@ -864,7 +917,7 @@ async function run() {
 
         // GET /api/admin/doctors
 
-        app.get("/api/admin/doctors", async (req, res) => {
+        app.get("/api/admin/doctors", verifyToken, adminVerify, async (req, res) => {
             try {
                 const doctors = await doctorsCollection
                     .find({})
@@ -895,7 +948,7 @@ async function run() {
 
         // PATCH /api/admin/doctors/:id/verify
 
-        app.patch("/api/admin/doctors/:id/verify", async (req, res) => {
+        app.patch("/api/admin/doctors/:id/verify", verifyToken, adminVerify, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await doctorsCollection.updateOne(
@@ -913,7 +966,7 @@ async function run() {
 
         // PATCH /api/admin/doctors/:id/reject
 
-        app.patch("/api/admin/doctors/:id/reject", async (req, res) => {
+        app.patch("/api/admin/doctors/:id/reject", verifyToken, adminVerify, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await doctorsCollection.updateOne(
@@ -931,7 +984,7 @@ async function run() {
 
         // PATCH /api/admin/doctors/:id/revoke
 
-        app.patch("/api/admin/doctors/:id/revoke", async (req, res) => {
+        app.patch("/api/admin/doctors/:id/revoke", verifyToken, adminVerify, async (req, res) => {
             const { id } = req.params;
             try {
                 const result = await doctorsCollection.updateOne(
@@ -954,7 +1007,7 @@ async function run() {
 
         // GET /api/admin/appointments
 
-        app.get("/api/admin/appointments", async (req, res) => {
+        app.get("/api/admin/appointments", verifyToken, adminVerify, async (req, res) => {
             const { status } = req.query;
             try {
                 const query = {};
@@ -997,7 +1050,7 @@ async function run() {
         //  4. PAYMENT MANAGEMENT                                      
 
         // GET /api/admin/payments
-        app.get("/api/admin/payments", async (req, res) => {
+        app.get("/api/admin/payments", verifyToken, adminVerify, async (req, res) => {
             try {
                 const payments = await paymentsCollection
                     .find({})
@@ -1035,7 +1088,7 @@ async function run() {
         //   5. ANALYTICS                                               
 
         // GET /api/admin/analytics
-        app.get("/api/admin/analytics", async (req, res) => {
+        app.get("/api/admin/analytics", verifyToken, adminVerify, async (req, res) => {
             try {
                 const [users, doctors, appointments, payments, reviews] = await Promise.all([
                     usersCollection.find({}).toArray(),
@@ -1138,6 +1191,148 @@ async function run() {
                         pending: doctors.filter(d => d.verificationStatus === "pending").length,
                         rejected: doctors.filter(d => d.verificationStatus === "rejected").length,
                     },
+                });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
+
+
+        // ════════════════════════════════════════════════════════════════
+        //  PUBLIC DOCTORS APIs 
+        // ════════════════════════════════════════════════════════════════
+
+        // ── 1. HOME PAGE — ──────────────
+        // GET /api/doctors/featured
+        app.get("/api/doctors/featured", async (req, res) => {
+            try {
+                const doctors = await doctorsCollection
+                    .find({ verificationStatus: "verified" })
+                    .sort({ createdAt: -1 })
+                    .limit(4)
+                    .toArray();
+
+                // userImage enrich — navbar 
+                const enriched = await Promise.all(
+                    doctors.map(async (doc) => {
+                        try {
+                            const user = await usersCollection.findOne(
+                                { _id: new ObjectId(doc.userId) },
+                                { projection: { image: 1 } }
+                            );
+                            return { ...doc, userImage: user?.image ?? null };
+                        } catch {
+                            return doc;
+                        }
+                    })
+                );
+
+                res.json(enriched);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // ── 2. FIND DOCTORS PAGE───────────────
+
+        app.get("/api/doctors", async (req, res) => {
+            const { search, specialization, sortBy } = req.query;
+            try {
+                const query = { verificationStatus: "verified" };
+
+                if (search && search.trim()) {
+                    query.$or = [
+                        { doctorName: { $regex: search.trim(), $options: "i" } },
+                    ];
+                }
+
+                if (specialization && specialization !== "all") {
+                    query.specialization = specialization;
+                }
+
+                let sortOption = { createdAt: -1 };
+                if (sortBy === "fee_asc") sortOption = { consultationFee: 1 };
+                if (sortBy === "fee_desc") sortOption = { consultationFee: -1 };
+                if (sortBy === "experience") sortOption = { experience: -1 };
+
+                const doctors = await doctorsCollection
+                    .find(query)
+                    .sort(sortOption)
+                    .toArray();
+
+                const enriched = await Promise.all(
+                    doctors.map(async (doc) => {
+                        try {
+                            const user = await usersCollection.findOne(
+                                { _id: new ObjectId(doc.userId) },
+                                { projection: { image: 1 } }
+                            );
+                            return { ...doc, userImage: user?.image ?? null };
+                        } catch {
+                            return doc;
+                        }
+                    })
+                );
+
+                res.json(enriched);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // ── 3. SPECIALIZATIONS LIST — filter dropdown ────────
+        app.get("/api/doctors/specializations", async (req, res) => {
+            try {
+                const result = await doctorsCollection.aggregate([
+                    { $match: { verificationStatus: "verified" } },
+                    { $group: { _id: "$specialization" } },
+                    { $match: { _id: { $ne: null } } },
+                    { $sort: { _id: 1 } },
+                ]).toArray();
+
+                const specs = result.map(r => r._id).filter(Boolean);
+                res.json(specs);
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // ── 4. DOCTOR DETAILS — single doctor + reviews + avg rating ──
+        // GET /api/doctors/:id
+
+        app.get("/api/doctors/:id", async (req, res) => {
+            const { id } = req.params;
+            try {
+                const doctor = await doctorsCollection.findOne({
+                    _id: new ObjectId(id),
+                });
+                if (!doctor) return res.status(404).json({ error: "Doctor not found" });
+
+                const user = await usersCollection.findOne(
+                    { _id: new ObjectId(doctor.userId) },
+                    { projection: { image: 1, email: 1 } }
+                );
+
+                const reviews = await reviewsCollection
+                    .find({ doctorId: doctor.userId })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                const avgRating = reviews.length
+                    ? parseFloat(
+                        (reviews.reduce((s, r) => s + (r.rating ?? 0), 0) / reviews.length).toFixed(1)
+                    )
+                    : 0;
+
+                res.json({
+                    ...doctor,
+                    userImage: user?.image ?? null,
+                    userEmail: user?.email ?? null,
+                    reviews,
+                    avgRating,
+                    totalReviews: reviews.length,
                 });
             } catch (err) {
                 res.status(500).json({ error: err.message });
