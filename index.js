@@ -3,15 +3,72 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
+const Stripe = require('stripe');
 
 dotenv.config();
 
 
 const app = express();
 const port = process.env.PORT || 5000;
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 
 app.use(cors());
+
+// WEBHOOK — express.json()
+
+app.post("/api/payment/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    let event;
+
+    try {
+        event = stripe.webhooks.constructEvent(
+            req.body,
+            sig,
+            process.env.STRIPE_WEBHOOK_SECRET
+        );
+    } catch (err) {
+        console.error("Webhook signature failed:", err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === "checkout.session.completed") {
+        const session = event.data.object;
+        const { doctorId, patientId, appointmentDate, appointmentsTime, consultationFee } = session.metadata;
+
+        try {
+            const appointment = await appointmentsCollection.insertOne({
+                doctorId,
+                patientId,
+                appointmentDate,
+                appointmentsTime,
+                appointmentStatus: "pending",
+                paymentStatus: "paid",
+                stripeSessionId: session.id,
+                createdAt: new Date(),
+            });
+
+            await paymentsCollection.insertOne({
+                appointmentId: appointment.insertedId.toString(),
+                patientId,
+                doctorId,
+                amount: parseFloat(consultationFee),
+                currency: "usd",
+                paymentStatus: "paid",
+                stripeSessionId: session.id,
+                stripePaymentIntentId: session.payment_intent,
+                paymentDate: new Date().toISOString().split("T")[0],
+                createdAt: new Date(),
+            });
+
+            console.log("Appointment + Payment saved:", session.id);
+        } catch (err) {
+            console.error("DB save error:", err.message);
+        }
+    }
+
+    res.json({ received: true });
+});
 app.use(express.json());
 
 
@@ -82,7 +139,8 @@ const adminVerify = (req, res, next) => {
     next();
 };
 
-
+let appointmentsCollection, paymentsCollection, usersCollection,
+    reviewsCollection, doctorsCollection, prescriptionsCollection, patientsCollection;
 
 async function run() {
     try {
@@ -101,6 +159,61 @@ async function run() {
         const doctorsCollection = db.collection("doctors");
         const prescriptionsCollection = db.collection("prescriptions");
         const patientsCollection = db.collection("patients");
+
+
+        // ════════════════════════════════════════════════════════════════
+        // STRIPE — CREATE CHECKOUT SESSION
+        // ════════════════════════════════════════════════════════════════
+
+        app.post("/api/payment/create-checkout-session", verifyToken, patientVerify, async (req, res) => {
+            const { doctorId, patientId, appointmentDate, appointmentsTime, doctorName, consultationFee } = req.body;
+
+            if (!doctorId || !patientId || !appointmentDate || !appointmentsTime || !consultationFee) {
+                return res.status(400).json({ error: "Missing required fields" });
+            }
+
+            try {
+                const session = await stripe.checkout.sessions.create({
+                    payment_method_types: ["card"],
+                    mode: "payment",
+                    line_items: [
+                        {
+                            price_data: {
+                                currency: "usd",
+                                product_data: {
+                                    name: `Consultation with ${doctorName}`,
+                                    description: `Date: ${appointmentDate} | Time: ${appointmentsTime}`,
+                                },
+                                unit_amount: Math.round(parseFloat(consultationFee) * 100),
+                            },
+                            quantity: 1,
+                        },
+                    ],
+                    metadata: { doctorId, patientId, appointmentDate, appointmentsTime, consultationFee },
+                    success_url: `${process.env.CLIENT_URL}/booking/success?session_id={CHECKOUT_SESSION_ID}`,
+                    cancel_url: `${process.env.CLIENT_URL}/doctors/${doctorId}`,
+                });
+
+                res.json({ url: session.url });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // GET session details (success page এ)
+        app.get("/api/payment/session/:sessionId", verifyToken, patientVerify, async (req, res) => {
+            try {
+                const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
+                res.json({
+                    status: session.status,
+                    customerEmail: session.customer_details?.email,
+                    amountTotal: session.amount_total / 100,
+                    metadata: session.metadata,
+                });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
 
         // ════════════════════════════════════════════════════════════════
         //  PATIENT DASHBOARD APIs
