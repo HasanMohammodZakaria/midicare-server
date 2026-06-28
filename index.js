@@ -152,13 +152,13 @@ async function run() {
 
         // MONGODB COLLECTION
 
-        const usersCollection = db.collection("user");
-        const appointmentsCollection = db.collection("appointments");
-        const reviewsCollection = db.collection("reviews");
-        const paymentsCollection = db.collection("payments");
-        const doctorsCollection = db.collection("doctors");
-        const prescriptionsCollection = db.collection("prescriptions");
-        const patientsCollection = db.collection("patients");
+        usersCollection = db.collection("user");
+        appointmentsCollection = db.collection("appointments");
+        reviewsCollection = db.collection("reviews");
+        paymentsCollection = db.collection("payments");
+        doctorsCollection = db.collection("doctors");
+        prescriptionsCollection = db.collection("prescriptions");
+        patientsCollection = db.collection("patients");
 
 
         // ════════════════════════════════════════════════════════════════
@@ -1351,7 +1351,7 @@ async function run() {
         // ── 2. FIND DOCTORS PAGE───────────────
 
         app.get("/api/doctors", async (req, res) => {
-            const { search, specialization, sortBy } = req.query;
+            const { search, specialization, sortBy, page = 1, limit = 10 } = req.query;
             try {
                 const query = { verificationStatus: "verified" };
 
@@ -1370,9 +1370,19 @@ async function run() {
                 if (sortBy === "fee_desc") sortOption = { consultationFee: -1 };
                 if (sortBy === "experience") sortOption = { experience: -1 };
 
+                // Pagination
+                const pageNum = parseInt(page);
+                const limitNum = parseInt(limit);
+                const skip = (pageNum - 1) * limitNum;
+
+                const total = await doctorsCollection.countDocuments(query);
+                const totalPages = Math.ceil(total / limitNum);
+
                 const doctors = await doctorsCollection
                     .find(query)
                     .sort(sortOption)
+                    .skip(skip)
+                    .limit(limitNum)
                     .toArray();
 
                 const enriched = await Promise.all(
@@ -1383,13 +1393,20 @@ async function run() {
                                 { projection: { image: 1 } }
                             );
                             return { ...doc, userImage: user?.image ?? null };
-                        } catch {
-                            return doc;
-                        }
+                        } catch { return doc; }
                     })
                 );
 
-                res.json(enriched);
+
+                res.json({
+                    doctors: enriched,
+                    pagination: {
+                        total,
+                        totalPages,
+                        currentPage: pageNum,
+                        limit: limitNum,
+                    }
+                });
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
