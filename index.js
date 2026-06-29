@@ -105,7 +105,10 @@ const verifyToken = async (req, res, next) => {
     try {
         const { payload } = await jwtVerify(token, JWKS);
         req.user = payload
+        console.log("========== JWT Payload ==========");
         console.log(payload);
+        console.log("Role:", payload.role);
+        console.log("=================================");
         next();
 
     } catch (error) {
@@ -200,7 +203,7 @@ async function run() {
             }
         });
 
-        // GET session details (success page এ)
+        // GET session details 
         app.get("/api/payment/session/:sessionId", verifyToken, patientVerify, async (req, res) => {
             try {
                 const session = await stripe.checkout.sessions.retrieve(req.params.sessionId);
@@ -223,27 +226,46 @@ async function run() {
 
         app.get('/api/patient/overview', verifyToken, patientVerify, async (req, res) => {
             const { userId } = req.query;
-            if (!userId) {
-                return res.status(400).json({ error: "userId required" });
-            }
+            if (!userId) return res.status(400).json({ error: "userId required" });
             try {
-                const appointments = await appointmentsCollection.find({ patientId: userId }).toArray();
-
-                const upcoming = appointments.filter((a) => a.appointmentsStatus === "pending" || a.appointmentsStatus === "accepted");
-
+                const appointments = await appointmentsCollection
+                    .find({ patientId: userId })
+                    .sort({ appointmentDate: -1 })
+                    .toArray();
+                const upcoming = appointments.filter(
+                    (a) => a.appointmentStatus === "pending" || a.appointmentStatus === "accepted"
+                );
                 const payments = await paymentsCollection.find({ patientId: userId }).toArray();
-
                 const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-
+                const enrichedUpcoming = await Promise.all(
+                    upcoming.slice(0, 5).map(async (appt) => {
+                        try {
+                            let doctor = await doctorsCollection.findOne({ userId: appt.doctorId });
+                            if (!doctor) {
+                                try {
+                                    doctor = await doctorsCollection.findOne({ _id: new ObjectId(appt.doctorId) });
+                                } catch { }
+                            }
+                            return {
+                                ...appt,
+                                doctorName: doctor?.doctorName || "Doctor",
+                                doctorSpecialization: doctor?.specialization || "Specialist",
+                                doctorImage: doctor?.profileImage || null,
+                            };
+                        } catch {
+                            return appt;
+                        }
+                    })
+                );
                 res.json({
                     totalAppointments: appointments.length,
                     upcomingAppointments: upcoming.length,
                     totalPayments: totalPaid,
                     paymentCount: payments.length,
-                })
-
+                    upcomingList: enrichedUpcoming,
+                });
             } catch (error) {
-                res.status(500).json({ error: error.message })
+                res.status(500).json({ error: error.message });
             }
         });
 
@@ -255,10 +277,37 @@ async function run() {
             if (!userId) return res.status(400).json({ error: "userId required" });
 
             try {
-                const appointments = await appointmentsCollection.find({ patientId: userId }).sort({ appointmentsDate: -1 }).toArray();
-                res.json(appointments)
+                const appointments = await appointmentsCollection
+                    .find({ patientId: userId })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+
+                const enriched = await Promise.all(
+                    appointments.map(async (appt) => {
+                        try {
+
+                            let doctor = await doctorsCollection.findOne({ userId: appt.doctorId });
+                            if (!doctor) {
+                                try {
+                                    doctor = await doctorsCollection.findOne({ _id: new ObjectId(appt.doctorId) });
+                                } catch { }
+                            }
+                            return {
+                                ...appt,
+                                doctorName: doctor?.doctorName || "Doctor",
+                                doctorSpecialization: doctor?.specialization || "Specialist",
+                                doctorImage: doctor?.profileImage || null,
+                            };
+                        } catch {
+                            return appt;
+                        }
+                    })
+                );
+
+                res.json(enriched);
             } catch (error) {
-                res.status(500).json({ error: error.message })
+                res.status(500).json({ error: error.message });
             }
         });
 
@@ -309,10 +358,36 @@ async function run() {
             const { userId } = req.query;
             if (!userId) return res.status(400).json({ error: "userId required" });
             try {
-                const payments = await paymentsCollection.find({ patientId: userId }).sort({ payments: -1 }).toArray();
-                res.json(payments);
+                const payments = await paymentsCollection
+                    .find({ patientId: userId })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                //res.json(payments);
+                const enriched = await Promise.all(
+                    payments.map(async (pay) => {
+                        try {
+                            let doctor = await doctorsCollection.findOne({ userId: pay.doctorId });
+                            if (!doctor) {
+                                try {
+                                    doctor = await doctorsCollection.findOne({
+                                        _id: new ObjectId(pay.doctorId)
+                                    });
+                                } catch { }
+                            }
+                            return {
+                                ...pay,
+                                doctorName: doctor?.doctorName || "Unknown",
+                                doctorSpecialization: doctor?.specialization || null,
+                                doctorImage: doctor?.profileImage || null,
+                            };
+                        } catch {
+                            return pay;
+                        }
+                    })
+                );
+                res.json(enriched);
             } catch (error) {
-                res.status(500).json({ error: error.message })
+                res.status(500).json({ error: error.message });
             }
         });
 
@@ -596,18 +671,36 @@ async function run() {
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
             try {
-                const query = { doctorId };
-                if (status && status !== "all") query.appointmentStatus = status;
+
+                const doctor = await doctorsCollection.findOne({ userId: doctorId });
+
+
+                const orConditions = [{ doctorId: doctorId }];
+                if (doctor) {
+                    orConditions.push({ doctorId: doctor._id.toString() });
+                }
+
+
+                const query = { $or: orConditions };
+                if (status && status !== "all") {
+                    query.appointmentStatus = status;
+                }
 
                 const appointments = await appointmentsCollection
                     .find(query)
-                    .sort({ appointmentDate: -1 })
+                    .sort({ createdAt: -1 })
                     .toArray();
 
                 const enriched = await Promise.all(
                     appointments.map(async (appt) => {
                         try {
-                            const patient = await usersCollection.findOne({ id: appt.patientId });
+
+                            let patient = null;
+                            try {
+                                patient = await usersCollection.findOne({
+                                    _id: new ObjectId(appt.patientId)
+                                });
+                            } catch { }
                             return {
                                 ...appt,
                                 patientName: patient?.name || "Unknown",
@@ -615,7 +708,7 @@ async function run() {
                                 patientImage: patient?.image || null,
                             };
                         } catch {
-                            return appt;
+                            return { ...appt, patientName: "Unknown" };
                         }
                     })
                 );
@@ -673,52 +766,53 @@ async function run() {
 
         // GET /api/doctor/appointments?doctorId=xxx
 
-        app.get("/api/doctor/appointments", verifyToken, doctorVerify, async (req, res) => {
-            const { doctorId, status } = req.query;
-            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+        // app.get("/api/doctor/appointments", verifyToken, doctorVerify, async (req, res) => {
+        //     const { doctorId, status } = req.query;
+        //     if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
-            try {
-                const query = { doctorId };
-                if (status && status !== "all") query.appointmentStatus = status;
+        //     try {
+        //         const query = { doctorId };
+        //         if (status && status !== "all") query.appointmentStatus = status;
 
-                const appointments = await appointmentsCollection
-                    .find(query)
-                    .sort({ appointmentDate: -1 })
-                    .toArray();
+        //         const appointments = await appointmentsCollection
+        //             .find(query)
+        //             .sort({ appointmentDate: -1 })
+        //             .toArray();
 
-                // Patient info enrich করো
-                const enriched = await Promise.all(
-                    appointments.map(async (appt) => {
-                        try {
-                            const patient = await usersCollection.findOne({ id: appt.patientId });
-                            return {
-                                ...appt,
-                                patientName: patient?.name || "Unknown",
-                                patientEmail: patient?.email || null,
-                                patientImage: patient?.image || null,
-                            };
-                        } catch {
-                            return appt;
-                        }
-                    })
-                );
 
-                res.json(enriched);
-            } catch (err) {
-                res.status(500).json({ error: err.message });
-            }
-        });
+        //         const enriched = await Promise.all(
+        //             appointments.map(async (appt) => {
+        //                 try {
+        //                     const patient = await usersCollection.findOne({ id: appt.patientId });
+        //                     return {
+        //                         ...appt,
+        //                         patientName: patient?.name || "Unknown",
+        //                         patientEmail: patient?.email || null,
+        //                         patientImage: patient?.image || null,
+        //                     };
+        //                 } catch {
+        //                     return appt;
+        //                 }
+        //             })
+        //         );
+
+        //         res.json(enriched);
+        //     } catch (err) {
+        //         res.status(500).json({ error: err.message });
+        //     }
+        // });
 
         // PATCH /api/doctor/appointments/:id/accept
 
         app.patch("/api/doctor/appointments/:id/accept", verifyToken, doctorVerify, async (req, res) => {
             const { id } = req.params;
-            const { doctorId } = req.body;
-            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+            // const { doctorId } = req.body;
+            // if (!doctorId) return res.status(400).json({ error: "doctorId required" });
 
             try {
+
                 const result = await appointmentsCollection.updateOne(
-                    { _id: new ObjectId(id), doctorId },
+                    { _id: new ObjectId(id) },
                     { $set: { appointmentStatus: "accepted" } }
                 );
                 if (result.matchedCount === 0) return res.status(404).json({ error: "Appointment not found" });
@@ -732,12 +826,9 @@ async function run() {
 
         app.patch("/api/doctor/appointments/:id/reject", verifyToken, doctorVerify, async (req, res) => {
             const { id } = req.params;
-            const { doctorId } = req.body;
-            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
-
             try {
                 const result = await appointmentsCollection.updateOne(
-                    { _id: new ObjectId(id), doctorId },
+                    { _id: new ObjectId(id) },
                     { $set: { appointmentStatus: "rejected" } }
                 );
                 if (result.matchedCount === 0) return res.status(404).json({ error: "Appointment not found" });
@@ -746,16 +837,13 @@ async function run() {
                 res.status(500).json({ error: err.message });
             }
         });
-
         // PATCH /api/doctor/appointments/:id/complete
+
         app.patch("/api/doctor/appointments/:id/complete", verifyToken, doctorVerify, async (req, res) => {
             const { id } = req.params;
-            const { doctorId } = req.body;
-            if (!doctorId) return res.status(400).json({ error: "doctorId required" });
-
             try {
                 const result = await appointmentsCollection.updateOne(
-                    { _id: new ObjectId(id), doctorId },
+                    { _id: new ObjectId(id) },
                     { $set: { appointmentStatus: "completed", completedAt: new Date() } }
                 );
                 if (result.matchedCount === 0) return res.status(404).json({ error: "Appointment not found" });
@@ -764,6 +852,43 @@ async function run() {
                 res.status(500).json({ error: err.message });
             }
         });
+
+        // PATCH /api/doctor/appointments/:id/reject
+
+        // app.patch("/api/doctor/appointments/:id/reject", verifyToken, doctorVerify, async (req, res) => {
+        //     const { id } = req.params;
+        //     const { doctorId } = req.body;
+        //     if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+        //     try {
+        //         const result = await appointmentsCollection.updateOne(
+        //             { _id: new ObjectId(id), doctorId },
+        //             { $set: { appointmentStatus: "rejected" } }
+        //         );
+        //         if (result.matchedCount === 0) return res.status(404).json({ error: "Appointment not found" });
+        //         res.json({ success: true });
+        //     } catch (err) {
+        //         res.status(500).json({ error: err.message });
+        //     }
+        // });
+
+        // PATCH /api/doctor/appointments/:id/complete
+        // app.patch("/api/doctor/appointments/:id/complete", verifyToken, doctorVerify, async (req, res) => {
+        //     const { id } = req.params;
+        //     const { doctorId } = req.body;
+        //     if (!doctorId) return res.status(400).json({ error: "doctorId required" });
+
+        //     try {
+        //         const result = await appointmentsCollection.updateOne(
+        //             { _id: new ObjectId(id), doctorId },
+        //             { $set: { appointmentStatus: "completed", completedAt: new Date() } }
+        //         );
+        //         if (result.matchedCount === 0) return res.status(404).json({ error: "Appointment not found" });
+        //         res.json({ success: true });
+        //     } catch (err) {
+        //         res.status(500).json({ error: err.message });
+        //     }
+        // });
 
 
 
@@ -776,29 +901,32 @@ async function run() {
         app.get("/api/doctor/prescriptions", verifyToken, doctorVerify, async (req, res) => {
             const { doctorId } = req.query;
             if (!doctorId) return res.status(400).json({ error: "doctorId required" });
-
             try {
                 const prescriptions = await prescriptionsCollection
                     .find({ doctorId })
                     .sort({ createdAt: -1 })
                     .toArray();
 
-                // Patient info enrich
                 const enriched = await Promise.all(
                     prescriptions.map(async (p) => {
+
+                        if (p.patientName) return p;
+
                         try {
-                            const patient = await usersCollection.findOne({ id: p.patientId });
+                            const patient = await usersCollection.findOne({
+                                _id: new ObjectId(p.patientId)
+                            });
                             return {
                                 ...p,
                                 patientName: patient?.name || "Unknown",
                                 patientEmail: patient?.email || null,
+                                patientImage: patient?.image || null,
                             };
                         } catch {
-                            return p;
+                            return { ...p, patientName: "Unknown" };
                         }
                     })
                 );
-
                 res.json(enriched);
             } catch (err) {
                 res.status(500).json({ error: err.message });
@@ -824,22 +952,28 @@ async function run() {
             if (!doctorId || !patientId || !appointmentId) {
                 return res.status(400).json({ error: "doctorId, patientId, appointmentId required" });
             }
-
             try {
-                // Already exists check
                 const existing = await prescriptionsCollection.findOne({ appointmentId });
                 if (existing) {
                     return res.status(400).json({ error: "Prescription already exists for this appointment" });
                 }
+
+
+                let patient = null;
+                try {
+                    patient = await usersCollection.findOne({ _id: new ObjectId(patientId) });
+                } catch { }
 
                 const result = await prescriptionsCollection.insertOne({
                     doctorId,
                     patientId,
                     appointmentId,
                     diagnosis,
-                    medications, // array: [{ name, dosage, duration }]
+                    medications,
                     notes,
-                    createdAt: new Date(),
+                    patientName: patient?.name || null,
+                    patientEmail: patient?.email || null,
+                    patientImage: patient?.image || null,
                 });
                 res.json(result);
             } catch (err) {
