@@ -1603,6 +1603,22 @@ async function run() {
             }
         });
 
+        // GET /api/stats — public
+        app.get("/api/stats", async (req, res) => {
+            try {
+                const [doctors, patients, appointments, reviews] = await Promise.all([
+                    doctorsCollection.countDocuments({ verificationStatus: "verified" }),
+                    usersCollection.countDocuments({ role: "patient" }),
+                    appointmentsCollection.countDocuments({}),
+                    reviewsCollection.countDocuments({}),
+                ]);
+                res.json({ doctors, patients, appointments, reviews });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+
 
 
 
