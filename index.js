@@ -478,19 +478,20 @@ async function run() {
 
             try {
                 const appointments = await appointmentsCollection
-                    .find({
-                        patientId: userId,
-                        appointmentStatus: "completed",
-                    })
+                    .find({ patientId: userId, appointmentStatus: "completed" })
                     .sort({ appointmentDate: -1 })
                     .toArray();
 
                 const enriched = await Promise.all(
                     appointments.map(async (appt) => {
                         try {
-                            const doctor = await doctorsCollection.findOne({
-                                _id: new ObjectId(appt.doctorId),
-                            });
+
+                            let doctor = await doctorsCollection.findOne({ userId: appt.doctorId });
+                            if (!doctor) {
+                                try {
+                                    doctor = await doctorsCollection.findOne({ _id: new ObjectId(appt.doctorId) });
+                                } catch { }
+                            }
                             return {
                                 ...appt,
                                 doctorName: doctor?.doctorName || null,
@@ -1613,6 +1614,40 @@ async function run() {
                     reviewsCollection.countDocuments({}),
                 ]);
                 res.json({ doctors, patients, appointments, reviews });
+            } catch (err) {
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+        // GET /api/reviews/featured — public
+        app.get("/api/reviews/featured", async (req, res) => {
+            try {
+                const reviews = await reviewsCollection
+                    .find({ reviewText: { $exists: true, $ne: "" } })
+                    .sort({ createdAt: -1 })
+                    .limit(4)
+                    .toArray();
+
+                const enriched = await Promise.all(
+                    reviews.map(async (r) => {
+                        try {
+                            const [patient, doctor] = await Promise.all([
+                                usersCollection.findOne({ _id: new ObjectId(r.patientId) }),
+                                doctorsCollection.findOne({ userId: r.doctorId }),
+                            ]);
+                            return {
+                                ...r,
+                                patientName: patient?.name || "Anonymous",
+                                patientImage: patient?.image || null,
+                                specialization: doctor?.specialization || "Patient",
+                            };
+                        } catch {
+                            return r;
+                        }
+                    })
+                );
+
+                res.json(enriched);
             } catch (err) {
                 res.status(500).json({ error: err.message });
             }
